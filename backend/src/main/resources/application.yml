@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: event-pipeline-simulator
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
+    consumer:
+      group-id: event-pipeline-simulator
+      auto-offset-reset: earliest
+      properties:
+        spring.json.trusted.packages: "in.vinaygupta.eventpipeline.*"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    listener:
+      missing-topics-fatal: false
+
+server:
+  port: ${PORT:${SERVER_PORT:8080}}
+  address: 0.0.0.0
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+pipeline:
+  broker-mode: ${EVENT_BROKER_MODE:simulation}
+  allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3001,http://127.0.0.1:5173}
+  topics:
+    inventory: ${KAFKA_TOPIC_INVENTORY:inventory.events}
+    retry: ${KAFKA_TOPIC_RETRY:inventory.events.retry}
+    dlq: ${KAFKA_TOPIC_DLQ:inventory.events.dlq}
+  max-retries: ${PIPELINE_MAX_RETRIES:2}
+  worker-delay: ${PIPELINE_WORKER_DELAY:450ms}
