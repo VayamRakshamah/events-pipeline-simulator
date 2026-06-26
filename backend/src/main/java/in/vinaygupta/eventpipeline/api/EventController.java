@@ -2,6 +2,8 @@ package in.vinaygupta.eventpipeline.api;
 
 import java.util.List;
 
+import in.vinaygupta.eventpipeline.metrics.PipelineMetrics;
+import in.vinaygupta.eventpipeline.metrics.PipelineMetricsSnapshot;
 import in.vinaygupta.eventpipeline.pipeline.InventoryEventService;
 import in.vinaygupta.eventpipeline.store.EventStore;
 import jakarta.validation.Valid;
@@ -19,10 +21,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class EventController {
     private final InventoryEventService service;
     private final EventStore store;
+    private final PipelineMetrics metrics;
 
-    public EventController(InventoryEventService service, EventStore store) {
+    public EventController(InventoryEventService service, EventStore store, PipelineMetrics metrics) {
         this.service = service;
         this.store = store;
+        this.metrics = metrics;
     }
 
     @PostMapping("/events/inventory")
@@ -46,6 +50,11 @@ public class EventController {
                 .map(EventResponse::from)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/metrics/pipeline")
+    public PipelineMetricsSnapshot metrics() {
+        return metrics.snapshot();
     }
 
     @DeleteMapping("/events")
