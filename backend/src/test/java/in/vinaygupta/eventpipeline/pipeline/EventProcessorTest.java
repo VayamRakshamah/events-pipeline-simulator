@@ -1,7 +1,15 @@
 package in.vinaygupta.eventpipeline.pipeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
+import java.time.Duration;
+import java.util.List;
+
+import in.vinaygupta.eventpipeline.broker.EventBroker;
+import in.vinaygupta.eventpipeline.config.PipelineProperties;
 import in.vinaygupta.eventpipeline.domain.EventScenario;
 import in.vinaygupta.eventpipeline.domain.EventStatus;
 import in.vinaygupta.eventpipeline.domain.InventoryEvent;
@@ -11,7 +19,15 @@ import org.junit.jupiter.api.Test;
 
 class EventProcessorTest {
     private final EventStore store = new EventStore();
-    private final EventProcessor processor = new EventProcessor(store);
+    private final EventBroker broker = mock(EventBroker.class);
+    private final PipelineProperties properties = new PipelineProperties(
+            "simulation",
+            List.of("http://localhost:5173"),
+            new PipelineProperties.Topics("inventory.events", "inventory.events.retry", "inventory.events.dlq"),
+            2,
+            Duration.ZERO
+    );
+    private final EventProcessor processor = new EventProcessor(store, broker, properties);
 
     @Test
     void completesSuccessScenario() {
@@ -36,6 +52,7 @@ class EventProcessorTest {
         assertThat(updated.status()).isEqualTo(EventStatus.COMPLETED);
         assertThat(updated.retryCount()).isEqualTo(2);
         assertThat(updated.topicPath()).contains("inventory.events.retry");
+        verify(broker, times(2)).publishRetry("evt_2");
     }
 
     @Test
@@ -61,6 +78,7 @@ class EventProcessorTest {
         InventoryEvent updated = store.find("evt_4").orElseThrow();
         assertThat(updated.status()).isEqualTo(EventStatus.DEAD_LETTERED);
         assertThat(updated.failureReason()).contains("Poison message");
+        verify(broker).publishDeadLetter("evt_4");
     }
 
     @Test
