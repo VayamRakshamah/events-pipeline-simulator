@@ -1,62 +1,71 @@
 package in.vinaygupta.eventpipeline.pipeline;
 
+import in.vinaygupta.eventpipeline.broker.EventBroker;
+import in.vinaygupta.eventpipeline.config.PipelineProperties;
 import in.vinaygupta.eventpipeline.domain.EventScenario;
 import in.vinaygupta.eventpipeline.domain.EventStatus;
-import in.vinaygupta.eventpipeline.domain.InventoryEvent;
 import in.vinaygupta.eventpipeline.store.EventStore;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 @Service
 public class EventProcessor {
-    private static final int MAX_RETRIES = 2;
-    private static final String INVENTORY_TOPIC = "inventory.events";
-    private static final String RETRY_TOPIC = "inventory.events.retry";
-    private static final String DLQ_TOPIC = "inventory.events.dlq";
-
     private final EventStore store;
+    private final EventBroker broker;
+    private final PipelineProperties properties;
 
-    public EventProcessor(EventStore store) {
+    public EventProcessor(EventStore store, @Lazy EventBroker broker, PipelineProperties properties) {
         this.store = store;
+        this.broker = broker;
+        this.properties = properties;
     }
 
     public void process(String eventId) {
-        store.update(eventId, event -> event.transition(EventStatus.VALIDATING,
-                "Worker validating inventory payload", activeTopic(event)));
+        delay();
+        store.update(eventId, event -> event.transition(EventStatus.VALIDATING, "Worker validating inventory payload", activeTopic(event)));
+        delay();
 
-        InventoryEvent current = store.find(eventId).orElseThrow();
+        var current = store.find(eventId).orElseThrow();
         if (current.scenario() == EventScenario.VALIDATION_FAILURE) {
             store.update(eventId, event -> event.failed(EventStatus.DEAD_LETTERED,
                     "Validation failed: SKU and store combination is not allowed",
-                    DLQ_TOPIC));
+                    properties.topics().dlq()));
             return;
         }
 
-        store.update(eventId, event -> event.transition(EventStatus.PROCESSING,
-                "Worker applying inventory delta", activeTopic(event)));
+        store.update(eventId, event -> event.transition(EventStatus.PROCESSING, "Worker applying inventory delta", activeTopic(event)));
+        delay();
 
         current = store.find(eventId).orElseThrow();
         if (current.scenario() == EventScenario.POISON_MESSAGE) {
             store.update(eventId, event -> event.failed(EventStatus.DEAD_LETTERED,
                     "Poison message detected after deserialization guard",
-                    DLQ_TOPIC));
+                    properties.topics().dlq()));
+            broker.publishDeadLetter(eventId);
             return;
         }
 
-        if (current.scenario() == EventScenario.TRANSIENT_FAILURE && current.retryCount() < MAX_RETRIES) {
-            store.update(eventId, event -> event.retrying(
-                    "Transient downstream timeout, scheduling retry",
-                    RETRY_TOPIC));
+        if (current.scenario() == EventScenario.TRANSIENT_FAILURE && current.retryCount() < properties.maxRetries()) {
+            store.update(eventId, event -> event.retrying("Transient downstream timeout, scheduling retry", properties.topics().retry()));
+            broker.publishRetry(eventId);
             return;
         }
 
-        store.update(eventId, event -> event.transition(EventStatus.COMPLETED,
-                "Inventory event completed", activeTopic(event)));
+        store.update(eventId, event -> event.transition(EventStatus.COMPLETED, "Inventory event completed", activeTopic(event)));
     }
 
-    private String activeTopic(InventoryEvent event) {
+    private String activeTopic(in.vinaygupta.eventpipeline.domain.InventoryEvent event) {
         if (event.retryCount() > 0) {
-            return RETRY_TOPIC;
+            return properties.topics().retry();
         }
-        return INVENTORY_TOPIC;
+        return properties.topics().inventory();
+    }
+
+    private void delay() {
+        try {
+            Thread.sleep(properties.workerDelay().toMillis());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 }
